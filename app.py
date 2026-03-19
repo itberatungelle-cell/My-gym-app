@@ -17,113 +17,105 @@ def get_weather():
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={WEATHER_KEY}&units=metric&lang=de"
         res = requests.get(url, timeout=5).json()
-        temp = res['main']['temp']
-        desc = res['weather'][0]['description']
-        return round(temp, 1), desc
+        return round(res['main']['temp'], 1), res['weather'][0]['description']
     except:
         return None, None
 
 current_temp, current_desc = get_weather()
 
-st.title("🏋️ Gym-Flow & Wetter Tracker")
+st.title("🏋️ Mein ultimativer Gym-Planer")
 if current_temp is not None:
-    st.info(f"📍 **Wilhelmsdorf:** {current_temp}°C | {current_desc.capitalize()}")
+    st.info(f"🌡️ **Aktuell in Wilhelmsdorf:** {current_temp}°C | {current_desc.capitalize()}")
 
-# --- EINGABE-BEREICH ---
-with st.expander("➕ Neues Training eintragen", expanded=True):
+# --- 1. EINGABE ---
+with st.expander("➕ Training eintragen", expanded=False):
     with st.form("gym_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
             day = st.selectbox("Wochentag", ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"])
         with col2:
-            time = st.slider("Uhrzeit (Stunde)", 6, 23, 17)
-            
-        crowd = st.select_slider("Wie voll war es? (1=Leer, 10=Voll)", options=list(range(1, 11)), value=5)
-        
-        submitted = st.form_submit_button("Training Speichern")
-        
-        if submitted:
+            time = st.slider("Uhrzeit", 6, 23, 17)
+        crowd = st.select_slider("Auslastung (1=Leer, 10=Voll)", options=list(range(1, 11)), value=5)
+        if st.form_submit_button("Speichern"):
             payload = {
-                "entry.2114330699": day,
-                "entry.1094088238": str(time),
-                "entry.1741468156": str(crowd),
-                "entry.1365025023": str(current_temp) if current_temp else "N/A",
-                "entry.1773205727": current_desc if current_desc else "N/A"
+                "entry.2114330699": day, "entry.1094088238": str(time), "entry.1741468156": str(crowd),
+                "entry.1365025023": str(current_temp), "entry.1773205727": current_desc
             }
-            try:
-                r = requests.post(FORM_URL, data=payload, timeout=5)
-                if r.ok:
-                    st.success(f"Gespeichert! ({day}, {time} Uhr, {current_temp}°C)")
-                    st.cache_data.clear()
-                else:
-                    st.error("Fehler beim Senden an Google.")
-            except:
-                st.error("Verbindungsproblem.")
+            if requests.post(FORM_URL, data=payload).ok:
+                st.success("Gespeichert!"); st.cache_data.clear()
 
-# --- DATEN LADEN ---
+# --- 2. DATEN LADEN ---
 @st.cache_data(ttl=1)
 def load_data():
     try:
-        df = pd.read_csv(READ_URL)
-        # Wir nehmen die letzten 5 Spalten aus dem Sheet
-        df = df.iloc[:, -5:].copy()
+        df = pd.read_csv(READ_URL).iloc[:, -5:]
         df.columns = ["Wochentag", "Uhrzeit", "Auslastung", "Temperatur", "Wetter"]
-        df["Auslastung"] = pd.to_numeric(df["Auslastung"], errors='coerce').fillna(0)
-        df["Uhrzeit"] = pd.to_numeric(df["Uhrzeit"], errors='coerce').fillna(0).astype(int)
-        df["Temperatur"] = pd.to_numeric(df["Temperatur"], errors='coerce').fillna(0)
+        for col in ["Auslastung", "Uhrzeit", "Temperatur"]:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
-    except:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 df = load_data()
 
-# --- ANALYSE ---
 if not df.empty:
     tage_order = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
-    
+
+    # --- 3. GLOBALER WETTER-FILTER ---
     st.divider()
-    st.subheader("☀️ Wetter-Einfluss Analyse")
-    
-    wetter_filter = st.radio(
-        "Daten filtern:", 
-        ["Alle Tage", "Schönes Wetter (>= 20°C)", "Kühles Wetter (< 20°C)"], 
-        horizontal=True
+    wetter_filter = st.segmented_control(
+        "Wetterlage auswählen (filtert alle Grafiken):", 
+        options=["Alle", "☀️ Heiß (>=20°C)", "☁️ Kühl (<20°C)"], 
+        default="Alle"
     )
     
-    # Filter-Logik
-    if "Schönes" in wetter_filter:
-        display_df = df[df["Temperatur"] >= 20]
-    elif "Kühles" in wetter_filter:
-        display_df = df[df["Temperatur"] < 20]
-    else:
-        display_df = df
+    dff = df.copy()
+    if "Heiß" in wetter_filter: dff = df[df["Temperatur"] >= 20]
+    elif "Kühl" in wetter_filter: dff = df[df["Temperatur"] < 20]
 
-    if not display_df.empty:
-        # Heatmap
-        heatmap_data = display_df.groupby(["Wochentag", "Uhrzeit"], observed=True)["Auslastung"].mean().reset_index()
+    if dff.empty:
+        st.warning("Keine Daten für diese Wetterlage vorhanden.")
+    else:
+        # --- 4. ZEITFENSTER-CHECK (Wunsch von vorhin) ---
+        st.subheader("🧐 Dein persönlicher Check")
+        c1, c2, c3 = st.columns([1, 1, 1.5])
+        with c1: check_day = st.selectbox("Tag:", tage_order)
+        with c2: t_range = st.slider("Zeitfenster:", 6, 23, (17, 20))
         
-        chart = alt.Chart(heatmap_data).mark_rect().encode(
+        check_df = dff[(dff["Wochentag"] == check_day) & (dff["Uhrzeit"].between(t_range[0], t_range[1]))]
+        with c3:
+            if not check_df.empty:
+                best = check_df.groupby("Uhrzeit")["Auslastung"].mean().idxmin()
+                st.success(f"Beste Zeit: **{int(best)}:00 Uhr**")
+            else: st.write("Keine Daten im Fenster.")
+
+        # --- 5. HEATMAP ---
+        st.subheader("🌡️ Auslastungs-Matrix")
+        hm_data = dff.groupby(["Wochentag", "Uhrzeit"])["Auslastung"].mean().reset_index()
+        base = alt.Chart(hm_data).encode(
             x=alt.X('Wochentag:N', sort=tage_order, title=None),
-            y=alt.Y('Uhrzeit:O', title="Uhrzeit", sort="descending"),
-            color=alt.Color('Auslastung:Q', scale=alt.Scale(scheme='redyellowgreen', reverse=True), legend=None),
-            tooltip=['Wochentag', 'Uhrzeit', 'Auslastung']
-        ).properties(height=400)
-        
-        text = chart.mark_text(baseline='middle').encode(
+            y=alt.Y('Uhrzeit:O', title="Uhrzeit", sort="descending")
+        )
+        heatmap = base.mark_rect().encode(
+            color=alt.Color('Auslastung:Q', scale=alt.Scale(scheme='redyellowgreen', reverse=True), legend=None)
+        )
+        text = base.mark_text(baseline='middle').encode(
             text=alt.Text('Auslastung:Q', format='.1f'),
             color=alt.condition(alt.datum.Auslastung > 7, alt.value('white'), alt.value('black'))
         )
-        
-        st.altair_chart(chart + text, use_container_width=True)
-        
-        # Beste Zeit im Filter
-        best_row = heatmap_data.loc[heatmap_data["Auslastung"].idxmin()]
-        st.success(f"💡 Tipp für dieses Wetter: **{best_row['Wochentag']}** um **{int(best_row['Uhrzeit'])}:00 Uhr** ist es am leersten.")
-    else:
-        st.warning("Noch keine Daten für diese Wetterlage gespeichert.")
+        st.altair_chart(heatmap + text, use_container_width=True)
 
-    with st.expander("Vollständige Tabelle anzeigen"):
-        st.dataframe(df, use_container_width=True)
+        # --- 6. WOCHENVERLAUF ---
+        st.subheader("📈 Durchschnitt pro Tag")
+        bar_data = dff.groupby("Wochentag")["Auslastung"].mean().reset_index()
+        bars = alt.Chart(bar_data).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
+            x=alt.X('Wochentag:N', sort=tage_order, title=None),
+            y=alt.Y('Auslastung:Q', title="Score", scale=alt.Scale(domain=[0, 10])),
+            color=alt.Color('Auslastung:Q', scale=alt.Scale(scheme='redyellowgreen', reverse=True), legend=None)
+        ).properties(height=250)
+        st.altair_chart(bars, use_container_width=True)
+
+    with st.expander("Rohdaten"):
+        st.dataframe(df)
 else:
-    st.info("Noch keine Daten vorhanden. Fang an zu tracken!")
+    st.info("Bitte erste Daten eintragen!")
     
