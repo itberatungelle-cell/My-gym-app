@@ -48,8 +48,10 @@ def load_data():
         df["Auslastung"] = pd.to_numeric(df["Auslastung"], errors='coerce').fillna(0)
         df["Uhrzeit"] = pd.to_numeric(df["Uhrzeit"], errors='coerce').fillna(0).astype(int)
         
-        tage_ordnung = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
-        df["Wochentag"] = pd.Categorical(df["Wochentag"], categories=tage_ordnung, ordered=True)
+        # Mapping für die harte Sortierung (Mo=0, Di=1...)
+        tage_map = {"Montag": 0, "Dienstag": 1, "Mittwoch": 2, "Donnerstag": 3, "Freitag": 4, "Samstag": 5, "Sonntag": 6}
+        df["TagNummer"] = df["Wochentag"].map(tage_map)
+        
         return df
     except:
         return pd.DataFrame()
@@ -62,7 +64,7 @@ if not df.empty:
     st.subheader("📊 Deine Analyse")
 
     # 1. Top 3 Empfehlungen
-    best_stats = df.groupby(["Wochentag", "Uhrzeit"], observed=True)["Auslastung"].mean().reset_index()
+    best_stats = df.groupby(["Wochentag", "Uhrzeit", "TagNummer"], observed=True)["Auslastung"].mean().reset_index()
     best_times = best_stats.sort_values(by="Auslastung", ascending=True)
     
     st.write("Die besten Zeiten zum Trainieren:")
@@ -70,6 +72,7 @@ if not df.empty:
     
     for i, row in enumerate(best_times.head(3).itertuples()):
         with cols[i]:
+            # Wir nutzen "normal" aber drehen die Logik manuell, damit kleine Werte GRÜN werden
             st.metric(
                 label=str(row.Wochentag), 
                 value=f"{row.Uhrzeit}:00 Uhr", 
@@ -77,17 +80,20 @@ if not df.empty:
                 delta_color="inverse"
             )
     
-    # 2. Visuelles Diagramm (Sortierung erzwungen)
+    # 2. Visuelles Diagramm (Harte Sortierung über TagNummer)
     st.write("### Auslastung im Wochenverlauf")
     
-    stats = df.groupby("Wochentag", observed=False)["Auslastung"].mean()
-    tage_liste = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
-    chart_data = stats.reindex(tage_liste)
+    # Wir gruppieren nach Nummer und Tagname, sortieren nach Nummer und nehmen dann den Namen als Index
+    chart_stats = df.groupby(["TagNummer", "Wochentag"], observed=True)["Auslastung"].mean().reset_index()
+    chart_stats = chart_stats.sort_values("TagNummer")
     
-    st.bar_chart(chart_data)
+    # Das Diagramm braucht den Namen als Index für die Beschriftung
+    chart_final = chart_stats.set_index("Wochentag")["Auslastung"]
+    
+    st.bar_chart(chart_final)
 
     with st.expander("Alle Einträge anzeigen"):
-        st.dataframe(df.sort_values("Wochentag"), use_container_width=True)
+        st.dataframe(df.sort_values("TagNummer"), use_container_width=True)
 else:
-    st.info("Noch keine Daten vorhanden. Bitte trage oben dein Training ein!")
+    st.info("Noch keine Daten vorhanden.")
     
