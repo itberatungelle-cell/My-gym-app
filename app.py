@@ -7,7 +7,7 @@ st.title("🏋️ Gym-Flow Tracker (Cloud)")
 # --- KONFIGURATION ---
 # WICHTIG: Deine Google Sheet URL muss am Ende "/export?format=csv" haben!
 # Beispiel: https://docs.google.com/spreadsheets/d/1ABC...XYZ/export?format=csv
-sheet_id = "DEINE_SHEET_ID_HIER" # Die lange Zeichenfolge in deiner Browser-URL
+sheet_id = "160eAiq0CW9p8py6GhbkVMdABXtoB3ANtoh1ez1dpZ_4" # Die lange Zeichenfolge in deiner Browser-URL
 url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
 
 # Daten laden
