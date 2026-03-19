@@ -38,16 +38,19 @@ with st.form("gym_form", clear_on_submit=True):
             st.error("Verbindung fehlgeschlagen.")
 
 # --- DATEN LADEN & VORBEREITEN ---
-@st.cache_data(ttl=2)
+@st.cache_data(ttl=1) # Cache fast deaktiviert für sofortige Updates
 def load_data():
     try:
         df = pd.read_csv(READ_URL)
+        # Die letzten 3 Spalten extrahieren
         df = df.iloc[:, -3:].copy()
         df.columns = ["Wochentag", "Uhrzeit", "Auslastung"]
         
+        # Datentypen säubern
         df["Auslastung"] = pd.to_numeric(df["Auslastung"], errors='coerce').fillna(0)
         df["Uhrzeit"] = pd.to_numeric(df["Uhrzeit"], errors='coerce').fillna(0).astype(int)
         
+        # WICHTIG: Hier definieren wir die feste Sortierung
         tage_ordnung = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
         df["Wochentag"] = pd.Categorical(df["Wochentag"], categories=tage_ordnung, ordered=True)
         return df
@@ -62,32 +65,10 @@ if not df.empty:
     st.subheader("📊 Deine Analyse")
 
     # Durchschnitt berechnen
-    stats = df.groupby(["Wochentag", "Uhrzeit"], observed=True)["Auslastung"].mean().reset_index()
+    stats = df.groupby("Wochentag", observed=False)["Auslastung"].mean()
     
     # 1. Top 3 Empfehlungen (Fix: Inverse Farben)
-    best_times = stats.sort_values(by="Auslastung", ascending=True)
-    st.write("Die besten Zeiten zum Trainieren:")
-    cols = st.columns(3)
-    
-    for i, row in enumerate(best_times.head(3).itertuples()):
-        with cols[i]:
-            # delta_color="normal" + ein Minus-Zeichen trickst die Farbe auf Grün bei niedrigen Werten
-            st.metric(
-                label=str(row.Wochentag), 
-                value=f"{row.Uhrzeit}:00 Uhr", 
-                delta=f"{row.Auslastung:.1f} Auslastung", 
-                delta_color="inverse" 
-            )
-    
-    # 2. Visuelles Diagramm (Fix: Sortierte Tage)
-    st.write("### Auslastung im Überblick")
-    
-    # Wir sortieren die Daten explizit vor dem Anzeigen
-    chart_data = stats.groupby("Wochentag", observed=True)["Auslastung"].mean().reindex(["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"])
-    st.bar_chart(chart_data)
-
-    with st.expander("Alle Einträge anzeigen"):
-        st.dataframe(df.sort_values("Wochentag"), use_container_width=True)
-else:
-    st.info("Noch keine Daten vorhanden.")
+    # Wir nehmen nur Tage, an denen auch wirklich Daten vorliegen
+    best_stats = df.groupby(["Wochentag", "Uhrzeit"], observed=True)["Auslastung"].mean().reset_index()
+    best_times = best_stats.sort_values(by="Auslastung", ascending=
     
