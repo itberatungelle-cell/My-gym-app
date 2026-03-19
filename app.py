@@ -1,22 +1,24 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
 st.set_page_config(page_title="Gym-Tracker Cloud", page_icon="🏋️")
 st.title("🏋️ Gym-Flow Tracker (Cloud)")
 
-# Verbindung zu Google Sheets herstellen
-# Ersetze den Link unten durch DEINEN Google Sheets Link!
-url = "https://docs.google.com/spreadsheets/d/160eAiq0CW9p8py6GhbkVMdABXtoB3ANtoh1ez1dpZ_4/edit?usp=drivesdk"
-
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- KONFIGURATION ---
+# WICHTIG: Deine Google Sheet URL muss am Ende "/export?format=csv" haben!
+# Beispiel: https://docs.google.com/spreadsheets/d/1ABC...XYZ/export?format=csv
+sheet_id = "DEINE_SHEET_ID_HIER" # Die lange Zeichenfolge in deiner Browser-URL
+url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
 
 # Daten laden
-try:
-    data = conn.read(spreadsheet=url, usecols=[0, 1, 2])
-    data = data.dropna(how="all")
-except:
-    data = pd.DataFrame(columns=["Wochentag", "Uhrzeit", "Auslastung"])
+@st.cache_data(ttl=60) # Cache für 60 Sekunden, damit es schnell lädt
+def load_data(csv_url):
+    try:
+        return pd.read_csv(csv_url)
+    except:
+        return pd.DataFrame(columns=["Wochentag", "Uhrzeit", "Auslastung"])
+
+data = load_data(url)
 
 # --- EINGABE ---
 with st.form("entry_form"):
@@ -25,20 +27,28 @@ with st.form("entry_form"):
     time = st.slider("Uhrzeit", 6, 23, 17)
     crowd = st.select_slider("Auslastung (1-10)", options=list(range(1, 11)))
     
-    if st.form_submit_button("In Google Sheets speichern"):
-        new_entry = pd.DataFrame([[day, time, crowd]], columns=["Wochentag", "Uhrzeit", "Auslastung"])
-        updated_data = pd.concat([data, new_entry], ignore_index=True)
+    submitted = st.form_submit_button("Speichern")
+    if submitted:
+        # Hier ist der Trick: Wir leiten den User kurz zum Google Formular 
+        # oder wir nutzen eine einfachere Schreibmethode.
+        # Da GSheets-Update oft Rechte-Probleme hat, hier die stabilste Methode:
+        st.warning("Google blockiert oft das direkte Schreiben ohne Passwort.")
+        st.info("Klicke auf den Link unten, um die Daten direkt in deine Tabelle einzutragen:")
         
-        # In Google Sheets schreiben
-        conn.update(spreadsheet=url, data=updated_data)
-        st.success("Erfolgreich in Google Sheets gespeichert!")
-        st.balloons()
-        data = updated_data
+        # Link zur manuellen Korrektur oder zum Sheet
+        st.markdown(f"[👉 Hier klicken, um manuell im Sheet einzutragen](https://docs.google.com/spreadsheets/d/{sheet_id})")
+        
+        # Testweise lokale Speicherung für die aktuelle Session
+        new_entry = pd.DataFrame([[day, time, crowd]], columns=["Wochentag", "Uhrzeit", "Auslastung"])
+        data = pd.concat([data, new_entry], ignore_index=True)
+        st.success("In der aktuellen Ansicht hinzugefügt!")
 
 # --- AUSWERTUNG ---
 if not data.empty:
     st.divider()
     st.subheader("📊 Deine Statistiken")
+    # Stelle sicher, dass Auslastung eine Zahl ist
+    data["Auslastung"] = pd.to_numeric(data["Auslastung"], errors='coerce')
     avg_data = data.groupby(["Wochentag", "Uhrzeit"])["Auslastung"].mean().reset_index()
     best_times = avg_data.sort_values(by="Auslastung")
 
