@@ -46,62 +46,62 @@ df = load_data()
 if not df.empty:
     tage_order = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
     
-    # --- 1. SCHNELLER VERGLEICH (DEINE FRAGE) ---
+    # --- 1. DER OPTIMIERTE CHECK (TAG + ZEITSPANNE) ---
     st.divider()
-    st.subheader("🧐 Wann soll ich gehen?")
-    col_a, col_b = st.columns([1, 2])
+    st.subheader("🧐 Dein Zeitfenster-Check")
     
-    with col_a:
-        check_day = st.selectbox("Wähle einen Tag:", tage_order)
+    col_day, col_range, col_res = st.columns([1, 1, 1.5])
     
-    day_data = df[df["Wochentag"] == check_day]
-    if not day_data.empty:
-        # Durchschnitt pro Stunde für den gewählten Tag
-        hourly_avg = day_data.groupby("Uhrzeit")["Auslastung"].mean().reset_index()
-        best_hour = hourly_avg.loc[hourly_avg["Auslastung"].idxmin()]
-        
-        with col_b:
-            st.info(f"Am **{check_day}** ist es um **{int(best_hour['Uhrzeit'])}:00 Uhr** am leersten (Score: {best_hour['Auslastung']:.1f}).")
+    with col_day:
+        check_day = st.selectbox("Tag wählen:", tage_order)
+    
+    with col_range:
+        # Ein Bereichs-Slider für die Zeitspanne
+        time_range = st.slider("Zeitspanne wählen:", 6, 23, (17, 20))
+    
+    # Daten filtern nach Tag UND Zeitspanne
+    filtered_df = df[(df["Wochentag"] == check_day) & 
+                     (df["Uhrzeit"] >= time_range[0]) & 
+                     (df["Uhrzeit"] <= time_range[1])]
+    
+    with col_res:
+        if not filtered_df.empty:
+            hourly_avg = filtered_df.groupby("Uhrzeit")["Auslastung"].mean().reset_index()
+            best_hour = hourly_avg.loc[hourly_avg["Auslastung"].idxmin()]
+            
+            st.success(f"Beste Zeit am **{check_day}** zwischen **{time_range[0]}** und **{time_range[1]}** Uhr:\n\n"
+                       f"👉 **{int(best_hour['Uhrzeit'])}:00 Uhr** (Score: {best_hour['Auslastung']:.1f})")
+        else:
+            st.warning(f"Keine Daten für {check_day} in diesem Zeitraum.")
 
-    # --- 2. DIE HEATMAP (ALLE ZEITEN AUF EINEN BLICK) ---
-    st.subheader("🌡️ Auslastungs-Matrix (Heatmap)")
-    
-    # Daten für Heatmap vorbereiten
+    # --- 2. DIE HEATMAP (ZUR ÜBERSICHT) ---
+    st.subheader("🌡️ Alle Zeiten im Überblick")
     heatmap_data = df.groupby(["Wochentag", "Uhrzeit"], observed=True)["Auslastung"].mean().reset_index()
     
     heatmap = alt.Chart(heatmap_data).mark_rect().encode(
         x=alt.X('Wochentag:N', sort=tage_order, title=None),
         y=alt.Y('Uhrzeit:O', title="Uhrzeit", sort="descending"),
-        color=alt.Color('Auslastung:Q', 
-                        scale=alt.Scale(scheme='redyellowgreen', reverse=True),
-                        title="Auslastung"),
+        color=alt.Color('Auslastung:Q', scale=alt.Scale(scheme='redyellowgreen', reverse=True), legend=None),
         tooltip=['Wochentag', 'Uhrzeit', 'Auslastung']
     ).properties(height=400)
     
-    # Text-Labels in die Heatmap schreiben (Scores anzeigen)
+    # Scores in die Felder schreiben
     text = heatmap.mark_text(baseline='middle').encode(
         text=alt.Text('Auslastung:Q', format='.1f'),
-        color=alt.condition(
-            alt.datum.Auslastung > 7,
-            alt.value('white'),
-            alt.value('black')
-        )
+        color=alt.condition(alt.datum.Auslastung > 7, alt.value('white'), alt.value('black'))
     )
-    
     st.altair_chart(heatmap + text, use_container_width=True)
 
-    # --- 3. BESTE ZEITEN (FIX: OHNE ROT) ---
-    st.subheader("✅ Top 3 Geheimtipps")
+    # --- 3. DIE 3 BESTEN GESAMTZEITEN (OHNE ROT) ---
+    st.subheader("✅ Absolute Geheimtipps")
     best_times = heatmap_data.sort_values(by="Auslastung").head(3)
     cols = st.columns(3)
     for i, row in enumerate(best_times.itertuples()):
         with cols[i]:
-            # Wir nutzen keine Deltas mehr, um das Rot zu vermeiden. 
-            # Stattdessen ein schönes grünes Info-Feld.
-            st.success(f"**{row.Wochentag}**\n\n**{int(row.Uhrzeit)}:00 Uhr**\n\nScore: {row.Auslastung:.1f}")
+            st.info(f"**{row.Wochentag}** um **{int(row.Uhrzeit)}:00**\n\nScore: **{row.Auslastung:.1f}**")
 
-    # --- 4. WOCHENVERLAUF (DEINE LIEBLINGSGRAFIK) ---
-    st.subheader("📈 Durchschnitt pro Tag")
+    # --- 4. DURCHSCHNITT PRO TAG ---
+    st.subheader("📈 Auslastung im Wochenverlauf")
     line_data = df.groupby("Wochentag", observed=True)["Auslastung"].mean().reset_index()
     chart = alt.Chart(line_data).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
         x=alt.X('Wochentag:N', sort=tage_order, title=None),
