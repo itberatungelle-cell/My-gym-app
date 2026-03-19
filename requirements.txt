@@ -1,5 +1,6 @@
 streamlit>=1.30.0
 pandas
-altair<5
-st-gsheets-connection
+altair
+requests
+
 
