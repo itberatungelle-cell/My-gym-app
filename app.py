@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import requests
 import altair as alt
-from datetime import datetime
 
 # --- KONFIGURATION ---
 SHEET_ID = "160eAiq0CW9p8py6GhbkVMdABXtoB3ANtoh1ez1dpZ_4" 
@@ -27,20 +26,19 @@ with st.form("gym_form", clear_on_submit=True):
             "entry.1094088238": str(time),
             "entry.1741468156": str(crowd)
         }
-        headers = {'User-Agent': 'Mozilla/5.0'}
         try:
-            response = requests.post(FORM_URL, data=payload, headers=headers)
-            if response.ok:
-                st.success(f"Gespeichert! {day}, {time} Uhr (Level {crowd})")
+            r = requests.post(FORM_URL, data=payload)
+            if r.ok:
+                st.success("Gespeichert!")
                 st.balloons()
-                st.cache_data.clear() # Cache sofort löschen
+                st.cache_data.clear()
             else:
-                st.error(f"Fehler bei Google ({response.status_code})")
+                st.error("Fehler beim Senden.")
         except:
-            st.error("Verbindung fehlgeschlagen.")
+            st.error("Verbindungsproblem.")
 
 # --- DATEN LADEN ---
-@st.cache_data(ttl=0) # Wir schalten den Cache zum Testen komplett aus (0 Sekunden)
+@st.cache_data(ttl=1)
 def load_data():
     try:
         df = pd.read_csv(READ_URL)
@@ -56,40 +54,36 @@ df = load_data()
 # --- ANALYSE ---
 if not df.empty:
     st.divider()
-    st.subheader("📊 Deine Analyse")
-
-    # 1. Top 3 Zeiten (Wir lassen die Farbe jetzt weg, wenn sie zickt, und machen es schlicht & klar)
-    best_stats = df.groupby(["Wochentag", "Uhrzeit"], observed=True)["Auslastung"].mean().reset_index()
-    best_times = best_stats.sort_values(by="Auslastung", ascending=True).head(3)
     
-    st.write("Die besten Zeiten zum Trainieren:")
+    # 1. Top 3 Metriken (Fix: Niedrig = Grün)
+    stats_detail = df.groupby(["Wochentag", "Uhrzeit"], observed=True)["Auslastung"].mean().reset_index()
+    best_times = stats_detail.sort_values(by="Auslastung", ascending=True).head(3)
+    
+    st.subheader("📊 Beste Zeiten")
     cols = st.columns(3)
     for i, row in enumerate(best_times.itertuples()):
         with cols[i]:
-            st.metric(label=str(row.Wochentag), value=f"{row.Uhrzeit}:00 Uhr", delta=f"Level {row.Auslastung:.1f}", delta_color="inverse")
+            # delta_color="inverse" macht kleine Zahlen GRÜN
+            st.metric(label=str(row.Wochentag), value=f"{row.Uhrzeit}:00", delta=f"Score {row.Auslastung:.1f}", delta_color="inverse")
+
+    # 2. DAS DIAGRAMM (Altair fixiert die Sortierung)
+    st.subheader("📈 Auslastung im Wochenverlauf")
+    chart_data = df.groupby("Wochentag", observed=True)["Auslastung"].mean().reset_index()
     
-    # 2. DAS PROFI-DIAGRAMM (Altair erzwingt die Sortierung)
-    st.write("### Auslastung im Wochenverlauf")
+    # Hier wird die Sortierung knallhart festgelegt:
+    tage_order = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
     
-    # Daten für die Grafik vorbereiten
-    chart_stats = df.groupby("Wochentag", observed=True)["Auslastung"].mean().reset_index()
-    
-    # Altair Chart mit EXPLIZITER Sortierung
-    tage_folge = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
-    
-    chart = alt.Chart(chart_stats).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
-        x=alt.X('Wochentag:N', sort=tage_folge, title="Wochentag"),
-        y=alt.Y('Auslastung:Q', title="Durchschnittliche Auslastung"),
+    chart = alt.Chart(chart_data).mark_bar().encode(
+        x=alt.X('Wochentag:N', sort=tage_order, title="Tag"),
+        y=alt.Y('Auslastung:Q', title="Durchschnitt"),
         color=alt.Color('Auslastung:Q', scale=alt.Scale(scheme='yellowgreenred'), legend=None),
         tooltip=['Wochentag', 'Auslastung']
-    ).properties(height=350)
+    ).properties(height=300)
 
     st.altair_chart(chart, use_container_width=True)
-
-    with st.expander("Rohdaten"):
-        st.dataframe(df)
+    
+    with st.expander("Daten-Tabelle"):
+        st.write(df)
 else:
     st.info("Noch keine Daten vorhanden.")
-
-# Kleiner Test, ob die App aktuell ist
-st.caption(f"App-Update: {datetime.now().strftime('%H:%M:%S')} Uhr")
+    
