@@ -1,58 +1,77 @@
 import streamlit as st
 import pandas as pd
-
-st.set_page_config(page_title="Gym-Tracker Cloud", page_icon="🏋️")
-st.title("🏋️ Gym-Flow Tracker (Cloud)")
+import requests
 
 # --- KONFIGURATION ---
-# WICHTIG: Deine Google Sheet URL muss am Ende "/export?format=csv" haben!
-# Beispiel: https://docs.google.com/spreadsheets/d/1ABC...XYZ/export?format=csv
-sheet_id = "160eAiq0CW9p8py6GhbkVMdABXtoB3ANtoh1ez1dpZ_4" # Die lange Zeichenfolge in deiner Browser-URL
-url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+# 1. Deine Google Sheet ID (aus der Tabellen-URL)
+SHEET_ID = "160eAiq0CW9p8py6GhbkVMdABXtoB3ANtoh1ez1dpZ_4" 
+READ_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv"
 
-# Daten laden
-@st.cache_data(ttl=60) # Cache für 60 Sekunden, damit es schnell lädt
-def load_data(csv_url):
-    try:
-        return pd.read_csv(csv_url)
-    except:
-        return pd.DataFrame(columns=["Wochentag", "Uhrzeit", "Auslastung"])
+# 2. Deine Google Form Daten (aus deinem Link extrahiert)
+FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScLmlWy29EqqOpN--6EOEb_QlnxiarS24vKbj1bAs1nZhqEzg/formResponse"
 
-data = load_data(url)
+st.set_page_config(page_title="Gym Tracker", page_icon="🏋️")
+st.title("🏋️ Mein Gym-Flow Tracker")
 
-# --- EINGABE ---
-with st.form("entry_form"):
-    st.subheader("Neuen Besuch eintragen")
+# --- EINGABE-BEREICH ---
+with st.form("gym_form", clear_on_submit=True):
+    st.subheader("Neues Training eintragen")
     day = st.selectbox("Wochentag", ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"])
-    time = st.slider("Uhrzeit", 6, 23, 17)
-    crowd = st.select_slider("Auslastung (1-10)", options=list(range(1, 11)))
+    time = st.slider("Uhrzeit (Stunde)", 6, 23, 17)
+    crowd = st.select_slider("Wie voll war es? (1=Leer, 10=Voll)", options=list(range(1, 11)), value=5)
     
     submitted = st.form_submit_button("Speichern")
+    
     if submitted:
-        # Hier ist der Trick: Wir leiten den User kurz zum Google Formular 
-        # oder wir nutzen eine einfachere Schreibmethode.
-        # Da GSheets-Update oft Rechte-Probleme hat, hier die stabilste Methode:
-        st.warning("Google blockiert oft das direkte Schreiben ohne Passwort.")
-        st.info("Klicke auf den Link unten, um die Daten direkt in deine Tabelle einzutragen:")
-        
-        # Link zur manuellen Korrektur oder zum Sheet
-        st.markdown(f"[👉 Hier klicken, um manuell im Sheet einzutragen](https://docs.google.com/spreadsheets/d/{sheet_id})")
-        
-        # Testweise lokale Speicherung für die aktuelle Session
-        new_entry = pd.DataFrame([[day, time, crowd]], columns=["Wochentag", "Uhrzeit", "Auslastung"])
-        data = pd.concat([data, new_entry], ignore_index=True)
-        st.success("In der aktuellen Ansicht hinzugefügt!")
+        # Daten an Google Forms senden
+        payload = {
+            "entry.2114330699": day,
+            "entry.1094088238": time,
+            "entry.1741468156": crowd
+        }
+        try:
+            response = requests.post(FORM_URL, data=payload)
+            if response.status_code == 200:
+                st.success(f"Erfolgreich gespeichert: {day}, {time}:00 Uhr, Level {crowd}")
+                st.balloons()
+                st.cache_data.clear() # Cache leeren für frische Daten
+            else:
+                st.error("Fehler beim Senden an Google.")
+        except:
+            st.error("Verbindung fehlgeschlagen.")
 
 # --- AUSWERTUNG ---
-if not data.empty:
-    st.divider()
-    st.subheader("📊 Deine Statistiken")
-    # Stelle sicher, dass Auslastung eine Zahl ist
-    data["Auslastung"] = pd.to_numeric(data["Auslastung"], errors='coerce')
-    avg_data = data.groupby(["Wochentag", "Uhrzeit"])["Auslastung"].mean().reset_index()
-    best_times = avg_data.sort_values(by="Auslastung")
+st.divider()
+st.subheader("📊 Deine Analyse")
 
-    st.write("Die leersten Zeiten bisher:")
-    for i, row in best_times.head(3).iterrows():
-        st.info(f"📍 {row['Wochentag']} um {row['Uhrzeit']}:00 | Score: {row['Auslastung']:.1f}")
-        
+@st.cache_data(ttl=5) # Daten alle 5 Sek. neu laden
+def load_data():
+    try:
+        df = pd.read_csv(READ_URL)
+        # Spaltennamen anpassen (Google Sheets benennt sie oft nach dem Zeitstempel)
+        # Wir nehmen die letzten 3 Spalten
+        df = df.iloc[:, -3:] 
+        df.columns = ["Wochentag", "Uhrzeit", "Auslastung"]
+        return df
+    except:
+        return pd.DataFrame()
+
+df = load_data()
+
+if not df.empty:
+    # Berechnung des Schnitts
+    df["Auslastung"] = pd.to_numeric(df["Auslastung"], errors='coerce')
+    stats = df.groupby(["Wochentag", "Uhrzeit"])["Auslastung"].mean().reset_index()
+    best_times = stats.sort_values(by="Auslastung")
+
+    st.write("Die 3 besten (leersten) Zeiten:")
+    cols = st.columns(3)
+    for i, row in enumerate(best_times.head(3).itertuples()):
+        with cols[i]:
+            st.metric(label=row.Wochentag, value=f"{row.Uhrzeit}:00 Uhr", delta=f"Score: {row.Auslastung:.1f}", delta_color="inverse")
+    
+    # Kleines Diagramm zur Übersicht
+    st.bar_chart(data=stats, x="Wochentag", y="Auslastung")
+else:
+    st.info("Noch keine Daten vorhanden. Trage dein erstes Training oben ein!")
+    
