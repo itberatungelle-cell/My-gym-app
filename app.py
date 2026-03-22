@@ -12,14 +12,24 @@ FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScLmlWy29EqqOpN--6EOEb_Qlnx
 st.set_page_config(page_title="Gym Tracker", page_icon="🏋️", layout="wide")
 st.title("🏋️ Mein Gym-Flow Tracker")
 
-# --- HILFSFUNKTION FÜR DEUTSCHE ZEIT ---
+# --- AUTOMATISCHE ZEITZONEN-LOGIK (DEUTSCHLAND) ---
 def get_german_time():
-    # Wir nehmen die Serverzeit und addieren den Offset für Deutschland
-    # Streamlit Server sind meist UTC. Deutschland ist UTC+1 (Winter) oder UTC+2 (Sommer)
-    # Da wir uns im März 2026 befinden, ist meist noch Winterzeit (+1) oder gerade Zeitumstellung.
     now_utc = datetime.utcnow()
-    german_time = now_utc + timedelta(hours=1) # Standard-Offset für DE
     
+    # Bestimmung der Sommerzeit (Letzter Sonntag im März bis letzter Sonntag im Oktober)
+    # Einfache Logik für den Hausgebrauch:
+    year = now_utc.year
+    # Sommerzeit beginnt am letzten Sonntag im März
+    dst_start = datetime(year, 3, 31) - timedelta(days=(datetime(year, 3, 31).weekday() + 1) % 7)
+    # Sommerzeit endet am letzten Sonntag im Oktober
+    dst_end = datetime(year, 10, 31) - timedelta(days=(datetime(year, 10, 31).weekday() + 1) % 7)
+    
+    if dst_start <= now_utc < dst_end:
+        offset = 2 # Sommerzeit (MESZ)
+    else:
+        offset = 1 # Winterzeit (MEZ)
+        
+    german_time = now_utc + timedelta(hours=offset)
     days_de = {0: "Montag", 1: "Dienstag", 2: "Mittwoch", 3: "Donnerstag", 4: "Freitag", 5: "Samstag", 6: "Sonntag"}
     return days_de[german_time.weekday()], german_time.hour
 
@@ -34,6 +44,7 @@ with st.expander("➕ Neues Training eintragen", expanded=False):
             day = st.selectbox("Wochentag", tage_liste, index=tage_liste.index(current_day_de))
             weather_input = st.selectbox("Wetter heute", ["Sonne", "Bewölkt", "Regen"])
         with col2:
+            # Nutzt die berechnete deutsche Stunde
             time = st.slider("Uhrzeit (Stunde)", 6, 23, value=min(max(current_hour, 6), 23))
             crowd = st.select_slider("Wie voll war es? (1-10)", options=list(range(1, 11)), value=5)
         
@@ -47,7 +58,7 @@ with st.expander("➕ Neues Training eintragen", expanded=False):
             try:
                 r = requests.post(FORM_URL, data=payload, timeout=5)
                 if r.ok:
-                    st.success(f"Gespeichert für {time}:00 Uhr!")
+                    st.success(f"Eintrag für {time}:00 Uhr erfolgreich!")
                     st.cache_data.clear()
                 else: st.error("Fehler beim Senden.")
             except: st.error("Verbindungsproblem.")
@@ -72,40 +83,45 @@ if not df.empty:
     tage_order = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
     
     st.divider()
-    st.subheader("📊 Analyse & Wetter-Filter")
-    selected_weather = st.multiselect("Wetter-Filter:", ["Sonne", "Bewölkt", "Regen"], default=["Sonne", "Bewölkt", "Regen"])
+    st.subheader("📊 Wetter-Filter & Zeit-Check")
+    selected_weather = st.multiselect("Wetterlage:", ["Sonne", "Bewölkt", "Regen"], default=["Sonne", "Bewölkt", "Regen"])
     filtered_df = df[df["Wetter"].isin(selected_weather)]
 
     # --- ZEITFENSTER-CHECK ---
-    st.subheader("🧐 Dein Zeitfenster-Check")
     c1, c2 = st.columns([1, 2])
     with c1:
-        check_day = st.selectbox("Tag wählen:", tage_order, index=tage_order.index(current_day_de))
-        # Startzeit ist die aktuelle Stunde, Endzeit ist 23 Uhr
-        t_range = st.slider("Zeitspanne:", 6, 23, (min(max(current_hour, 6), 22), 23))
+        check_day = st.selectbox("Tag:", tage_order, index=tage_order.index(current_day_de))
+        # Startet automatisch bei der aktuellen Stunde
+        t_range = st.slider("Prognose für Zeitraum:", 6, 23, (min(max(current_hour, 6), 22), 23))
     
     check_df = filtered_df[(filtered_df["Wochentag"] == check_day) & (filtered_df["Uhrzeit"].between(t_range[0], t_range[1]))]
     with c2:
         if not check_df.empty:
             avg_scores = check_df.groupby("Uhrzeit")["Auslastung"].mean()
             best_h = avg_scores.idxmin()
-            st.success(f"Beste Zeit heute ab {t_range[0]}:00 Uhr: **{int(best_h)}:00 Uhr**")
-        else: st.info("Noch keine Daten für diesen Zeitraum.")
+            st.success(f"Beste Zeit heute: **{int(best_h)}:00 Uhr**")
+        else: st.info("Noch keine Daten vorhanden.")
 
-    # --- HEATMAP & BALKEN ---
-    st.subheader("🌡️ Stunden-Matrix")
+    # --- HEATMAP ---
+    st.subheader("🌡️ Auslastungs-Matrix")
     if not filtered_df.empty:
         hm_data = filtered_df.groupby(["Wochentag", "Uhrzeit"], observed=True)["Auslastung"].mean().reset_index()
         if not hm_data.empty:
             heatmap = alt.Chart(hm_data).mark_rect().encode(
                 x=alt.X('Wochentag:N', sort=tage_order, title=None),
                 y=alt.Y('Uhrzeit:O', title="Uhrzeit", sort="descending"),
-                color=alt.Color('Auslastung:Q', scale=alt.Scale(scheme='redyellowgreen', reverse=True), legend=None)
+                color=alt.Color('Auslastung:Q', scale=alt.Scale(scheme='redyellowgreen', reverse=True), legend=None),
+                tooltip=['Wochentag', 'Uhrzeit', 'Auslastung']
             ).properties(height=400)
-            st.altair_chart(heatmap, use_container_width=True)
+            
+            text = heatmap.mark_text(baseline='middle').encode(
+                text=alt.Text('Auslastung:Q', format='.1f'),
+                color=alt.condition(alt.datum.Auslastung > 7, alt.value('white'), alt.value('black'))
+            )
+            st.altair_chart(heatmap + text, use_container_width=True)
 
-    with st.expander("Tabelle anzeigen"):
+    with st.expander("Rohdaten anzeigen"):
         st.dataframe(df)
 else:
-    st.info("Noch keine Daten vorhanden.")
+    st.info("Trage dein erstes Training ein, um die Analyse zu starten!")
     
